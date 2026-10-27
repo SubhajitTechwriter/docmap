@@ -1,11 +1,14 @@
 /* ── DocMap application ── */
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const STORAGE_KEY_API          = 'docmap_api_key';
-const STORAGE_KEY_MODEL        = 'docmap_model';
-const STORAGE_KEY_PROVIDER     = 'docmap_provider';
-const STORAGE_KEY_PROXY_URL    = 'docmap_proxy_url';
+const STORAGE_KEY_API           = 'docmap_api_key';
+const STORAGE_KEY_MODEL         = 'docmap_model';
+const STORAGE_KEY_PROVIDER      = 'docmap_provider';
+const STORAGE_KEY_PROXY_URL     = 'docmap_proxy_url';
 const STORAGE_KEY_BEDROCK_MODEL = 'docmap_bedrock_model';
+const STORAGE_KEY_JIRA_URL      = 'docmap_jira_url';
+const STORAGE_KEY_JIRA_EMAIL    = 'docmap_jira_email';
+const STORAGE_KEY_JIRA_TOKEN    = 'docmap_jira_token';
 
 // ── State ────────────────────────────────────────────────────────────────────
 const state = {
@@ -14,8 +17,14 @@ const state = {
   provider:      localStorage.getItem(STORAGE_KEY_PROVIDER)      || 'anthropic',
   proxyUrl:      localStorage.getItem(STORAGE_KEY_PROXY_URL)     || 'http://localhost:3001',
   bedrockModel:  localStorage.getItem(STORAGE_KEY_BEDROCK_MODEL) || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+  jira: {
+    url:   localStorage.getItem(STORAGE_KEY_JIRA_URL)   || '',
+    email: localStorage.getItem(STORAGE_KEY_JIRA_EMAIL) || '',
+    token: localStorage.getItem(STORAGE_KEY_JIRA_TOKEN) || '',
+  },
   messages:      [],
   pendingFiles:  [],
+  detections:    {},   // key → { type, value, status: 'pending'|'fetched'|'dismissed' }
   cy:            null,
   activeNode:    null,
   isStreaming:   false,
@@ -792,6 +801,268 @@ function autoGrow(el) {
   el.style.height = Math.min(el.scrollHeight, 160) + 'px';
 }
 
+// ── Auto-detection engine ─────────────────────────────────────────────────────
+const DETECT = [
+  {
+    type:  'jira',
+    icon:  '🎫',
+    label: v => `Jira ${v}`,
+    // bare ticket ID OR full Jira URL
+    scan:  text => {
+      const ids = new Set();
+      for (const m of text.matchAll(/\b([A-Z]{2,10}-\d+)\b/g))      ids.add(m[1]);
+      for (const m of text.matchAll(/\/browse\/([A-Z]{2,10}-\d+)/g)) ids.add(m[1]);
+      return [...ids].map(id => ({ value: id }));
+    },
+  },
+  {
+    type:  'gdoc',
+    icon:  '📄',
+    label: () => 'Google Doc',
+    scan:  text => {
+      const hits = [];
+      for (const m of text.matchAll(/https?:\/\/docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)[^\s]*/g)) {
+        hits.push({ value: m[0] });
+      }
+      return hits;
+    },
+  },
+  {
+    type:  'file',
+    icon:  '📁',
+    label: v => v.replace(/.*[/\\]/, ''), // basename
+    scan:  text => {
+      const hits = new Set();
+      // Windows paths: C:\... or D:\...
+      for (const m of text.matchAll(/\b[A-Za-z]:\\[^\s"'\n,]+/g)) hits.add(m[0].replace(/[,;.]+$/, ''));
+      // Unix-style absolute paths
+      for (const m of text.matchAll(/(?:^|[\s"])(\/(Users|home|Documents|Downloads|tmp|var|opt|etc)[^\s"'\n,]*)/g)) hits.add(m[1].replace(/[,;.]+$/, ''));
+      return [...hits].map(v => ({ value: v }));
+    },
+  },
+];
+
+let detectTimer = null;
+
+function scheduleDetection() {
+  clearTimeout(detectTimer);
+  detectTimer = setTimeout(() => runDetection($('chat-input').value), 350);
+}
+
+function runDetection(text) {
+  const strip = $('detect-strip');
+  const found = new Map(); // key → {type, value, icon, label}
+
+  DETECT.forEach(d => {
+    d.scan(text).forEach(({ value }) => {
+      const key = `${d.type}:${value}`;
+      if (!state.detections[key] || state.detections[key].status === 'dismissed') return;
+      if (state.detections[key]?.status === 'fetched') { found.set(key, null); return; } // keep fetched chip
+      found.set(key, { type: d.type, value, icon: d.icon, label: d.label(value), key });
+    });
+  });
+
+  // First pass: add new detections
+  DETECT.forEach(d => {
+    d.scan(text).forEach(({ value }) => {
+      const key = `${d.type}:${value}`;
+      if (!(key in state.detections)) {
+        state.detections[key] = { type: d.type, value, status: 'pending' };
+        found.set(key, { type: d.type, value, icon: d.icon, label: d.label(value), key });
+      }
+    });
+  });
+
+  // Rebuild the strip
+  strip.innerHTML = '';
+  let visible = 0;
+
+  Object.entries(state.detections).forEach(([key, det]) => {
+    if (det.status === 'dismissed') return;
+    const parts = key.split(':');
+    const d = DETECT.find(x => x.type === parts[0]);
+    if (!d) return;
+    const chip = buildDetectChip(key, d.icon, d.label(det.value), det.status, det.type);
+    strip.appendChild(chip);
+    visible++;
+  });
+
+  strip.classList.toggle('hidden', visible === 0);
+}
+
+function buildDetectChip(key, icon, label, status, type) {
+  const chip = el('div', `detect-chip ${status}`, `
+    <span class="detect-icon">${icon}</span>
+    <span class="detect-label">${escapeHtml(label)}</span>
+    ${status === 'pending'  ? `<button class="detect-fetch" data-key="${key}">Fetch ↗</button>` : ''}
+    ${status === 'fetching' ? `<span class="detect-loading">…</span>` : ''}
+    ${status === 'fetched'  ? `<span class="detect-done">✓ attached</span>` : ''}
+    ${status !== 'fetched'  ? `<button class="detect-dismiss" data-key="${key}">×</button>` : ''}
+  `);
+
+  chip.querySelector('.detect-fetch')?.addEventListener('click', () => fetchDetected(key));
+  chip.querySelector('.detect-dismiss')?.addEventListener('click', () => {
+    state.detections[key].status = 'dismissed';
+    chip.remove();
+    if (!$('detect-strip').children.length) $('detect-strip').classList.add('hidden');
+  });
+
+  return chip;
+}
+
+async function fetchDetected(key) {
+  const det = state.detections[key];
+  if (!det) return;
+  det.status = 'fetching';
+  runDetection($('chat-input').value); // re-render chip as loading
+
+  try {
+    let content = '';
+    let displayName = '';
+
+    if (det.type === 'jira') {
+      if (!state.jira.url || !state.jira.email || !state.jira.token) {
+        appendMessage('ai', '⚙️ Jira isn\'t connected yet — click the 🔗 icon in the header to add your credentials.');
+        det.status = 'pending';
+        runDetection($('chat-input').value);
+        return;
+      }
+      const proxy = state.provider === 'bedrock' ? state.proxyUrl : 'http://localhost:3001';
+      const resp = await fetch(`${proxy}/api/jira`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jiraUrl: state.jira.url, email: state.jira.email, token: state.jira.token, ticketId: det.value }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `Jira error ${resp.status}`);
+      displayName = `Jira ${data.id}: ${data.summary}`;
+      content = formatJiraForClaude(data);
+
+    } else if (det.type === 'gdoc') {
+      const proxy = state.provider === 'bedrock' ? state.proxyUrl : 'http://localhost:3001';
+      const resp = await fetch(`${proxy}/api/gdoc?url=${encodeURIComponent(det.value)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `Google Docs error ${resp.status}`);
+      displayName = `Google Doc: ${data.title}`;
+      content = `[Google Doc: ${data.title}]\n${data.content}`;
+
+    } else if (det.type === 'file') {
+      const proxy = state.provider === 'bedrock' ? state.proxyUrl : 'http://localhost:3001';
+      const resp = await fetch(`${proxy}/api/file?path=${encodeURIComponent(det.value)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `File error ${resp.status}`);
+      displayName = data.name;
+      content = `[File: ${data.name}]\n${data.content}`;
+    }
+
+    // Add as a text attachment
+    state.pendingFiles.push({ type: 'text', name: displayName, text: content });
+    renderAttachStrip();
+    det.status = 'fetched';
+    runDetection($('chat-input').value);
+
+  } catch (err) {
+    det.status = 'pending';
+    runDetection($('chat-input').value);
+    appendMessage('ai', `Couldn't fetch **${det.value}**: ${err.message}`);
+  }
+}
+
+function formatJiraForClaude(t) {
+  let out = `[Jira ${t.type}: ${t.id}]\nSummary: ${t.summary}\nStatus: ${t.status} | Priority: ${t.priority} | Assignee: ${t.assignee}\nURL: ${t.url}\n`;
+  if (t.labels?.length) out += `Labels: ${t.labels.join(', ')}\n`;
+  if (t.description) out += `\nDescription:\n${t.description}`;
+  if (t.comments?.length) {
+    out += `\n\nComments (${t.comments.length} recent):\n`;
+    t.comments.forEach(c => { out += `\n[${c.author} – ${c.date}]\n${c.text}\n`; });
+  }
+  return out;
+}
+
+// ── Connections modal ─────────────────────────────────────────────────────────
+function initConnections() {
+  // Load saved Jira creds into form
+  if ($('jira-url'))   $('jira-url').value   = state.jira.url;
+  if ($('jira-email')) $('jira-email').value = state.jira.email;
+  if ($('jira-token')) $('jira-token').value = state.jira.token;
+
+  // Update conn dot if Jira is configured
+  updateConnDot();
+
+  $('btn-connections').addEventListener('click', () => {
+    $('conn-modal').classList.remove('hidden');
+    activateConnTab('jira');
+  });
+  $('conn-close').addEventListener('click', () => $('conn-modal').classList.add('hidden'));
+  $('conn-backdrop').addEventListener('click', () => $('conn-modal').classList.add('hidden'));
+
+  document.querySelectorAll('.conn-tab').forEach(t => {
+    t.addEventListener('click', () => activateConnTab(t.dataset.tab));
+  });
+
+  $('jira-save').addEventListener('click', saveJira);
+  $('jira-test').addEventListener('click', testJira);
+}
+
+function activateConnTab(name) {
+  document.querySelectorAll('.conn-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.conn-pane').forEach(p => p.classList.toggle('hidden', p.id !== `conn-tab-${name}`));
+}
+
+function updateConnDot() {
+  $('conn-dot').classList.toggle('hidden', !state.jira.url || !state.jira.token);
+}
+
+async function saveJira() {
+  state.jira.url   = $('jira-url').value.trim().replace(/\/$/, '');
+  state.jira.email = $('jira-email').value.trim();
+  state.jira.token = $('jira-token').value.trim();
+  localStorage.setItem(STORAGE_KEY_JIRA_URL,   state.jira.url);
+  localStorage.setItem(STORAGE_KEY_JIRA_EMAIL, state.jira.email);
+  localStorage.setItem(STORAGE_KEY_JIRA_TOKEN, state.jira.token);
+  updateConnDot();
+  showConnStatus('jira', '✓ Saved', 'green');
+}
+
+async function testJira() {
+  const url   = $('jira-url').value.trim().replace(/\/$/, '');
+  const email = $('jira-email').value.trim();
+  const token = $('jira-token').value.trim();
+  if (!url || !email || !token) { showConnStatus('jira', '✗ Fill in all fields first', 'red'); return; }
+
+  showConnStatus('jira', 'Testing…', 'gray');
+  const proxy = state.provider === 'bedrock' ? state.proxyUrl : 'http://localhost:3001';
+  try {
+    const resp = await fetch(`${proxy}/api/jira`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jiraUrl: url, email, token, ticketId: '_test_' }),
+    });
+    const data = await resp.json();
+    // 404 on _test_ ticket = connection works, just ticket not found
+    if (resp.ok || resp.status === 404 || (data.error && data.error.includes('not found'))) {
+      showConnStatus('jira', '✓ Connected to Jira', 'green');
+    } else if (resp.status === 401) {
+      showConnStatus('jira', '✗ Invalid credentials', 'red');
+    } else {
+      showConnStatus('jira', `✗ ${data.error || resp.status}`, 'red');
+    }
+  } catch (e) {
+    showConnStatus('jira', `✗ ${e.message} — is the proxy running?`, 'red');
+  }
+}
+
+function showConnStatus(tab, msg, color) {
+  const el2 = $(`${tab}-status`);
+  el2.textContent = msg;
+  el2.className = `text-xs mt-1 ${color === 'green' ? 'text-green-400' : color === 'red' ? 'text-red-400' : 'text-slate-400'}`;
+  el2.classList.remove('hidden');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 // ── Event listeners ───────────────────────────────────────────────────────────
 function initEvents() {
   // Send
@@ -799,11 +1070,15 @@ function initEvents() {
   $('chat-input').addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); sendMessage(); }
   });
-  $('chat-input').addEventListener('input', () => autoGrow($('chat-input')));
+  $('chat-input').addEventListener('input', () => { autoGrow($('chat-input')); scheduleDetection(); });
+  $('chat-input').addEventListener('paste', () => setTimeout(scheduleDetection, 50));
 
   // New chat
   $('btn-new-chat').addEventListener('click', () => {
     state.messages = [];
+    state.detections = {};
+    $('detect-strip').innerHTML = '';
+    $('detect-strip').classList.add('hidden');
     if (state.cy) { state.cy.destroy(); state.cy = null; }
     $('map-empty-state').style.display = '';
     $('map-controls').classList.add('hidden');
@@ -887,5 +1162,6 @@ async function fetchGitHubReadme(owner, repo) {
 document.addEventListener('DOMContentLoaded', () => {
   initSetup();
   initFileHandling();
+  initConnections();
   initEvents();
 });

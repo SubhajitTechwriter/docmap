@@ -140,12 +140,20 @@
               d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
           </svg>
         </button>
+        <button id="btn-connections" title="Connections (Jira, files, Google Docs)"
+          class="ctrl-btn text-slate-500 hover:text-white relative">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+          </svg>
+          <span id="conn-dot" class="hidden absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-green-500"></span>
+        </button>
         <button id="btn-new-chat"
           class="text-xs text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500
                  px-3 py-1.5 rounded-lg transition-colors">
           New chat
         </button>
-        <button id="btn-change-key" title="Change API key"
+        <button id="btn-change-key" title="Change AI provider / API key"
           class="ctrl-btn text-slate-500 hover:text-white">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -169,6 +177,9 @@
         <!-- Attachment preview strip -->
         <div id="attachment-strip" class="hidden px-3 pb-2 flex gap-2 flex-wrap border-t border-slate-800 pt-2"></div>
 
+        <!-- Auto-detect strip (Jira IDs, file paths, Google Docs) -->
+        <div id="detect-strip" class="hidden px-3 pt-2 pb-1 flex gap-2 flex-wrap border-t border-slate-800"></div>
+
         <!-- Input area -->
         <div class="flex-shrink-0 p-3 border-t border-slate-800 bg-slate-900/50">
           <div class="flex items-end gap-2">
@@ -178,10 +189,12 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
               </svg>
-              <input id="file-input" type="file" class="hidden" accept="image/*,.txt,.md,.json,.yaml,.yml" multiple />
+              <input id="file-input" type="file" class="hidden"
+                accept="image/*,.txt,.md,.json,.yaml,.yml,.docx,.pdf,.xml,.csv" multiple />
             </label>
             <!-- Text input -->
-            <textarea id="chat-input" rows="1" placeholder="Paste Jira ticket, GitHub URL, release notes, or describe the change…"
+            <textarea id="chat-input" rows="1"
+              placeholder="Type a Jira ID (DOC-123), paste a file path or Google Doc URL, or just describe the change…"
               class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white
                      placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none
                      min-h-[42px] max-h-40 overflow-y-auto"></textarea>
@@ -299,6 +312,92 @@
                  text-xs font-medium py-2 px-3 rounded-lg transition-colors">
           Ask DocMap about this node →
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CONNECTIONS MODAL ===== -->
+  <div id="conn-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div id="conn-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+    <div class="relative w-full max-w-md bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="font-bold text-white">Connections</h3>
+        <button id="conn-close" class="text-slate-500 hover:text-white transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex border-b border-slate-800">
+        <button class="conn-tab active" data-tab="jira">Jira</button>
+        <button class="conn-tab" data-tab="gdoc">Google Docs</button>
+        <button class="conn-tab" data-tab="files">Local Files</button>
+      </div>
+
+      <!-- Jira tab -->
+      <div id="conn-tab-jira" class="conn-pane p-5 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Jira instance URL</label>
+          <input id="jira-url" type="url" placeholder="https://yourcompany.atlassian.net"
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500
+                   focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Email</label>
+          <input id="jira-email" type="email" placeholder="you@company.com"
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500
+                   focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">
+            API Token
+            <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener"
+               class="ml-2 text-indigo-400 hover:text-indigo-300 font-normal">Get token ↗</a>
+          </label>
+          <input id="jira-token" type="password" placeholder="ATATT3xFfGF0..."
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500
+                   focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-mono" />
+        </div>
+        <div class="flex gap-2 pt-1">
+          <button id="jira-test" class="flex-1 border border-slate-600 hover:border-slate-400 text-slate-400
+                  hover:text-white text-sm py-2 rounded-lg transition-colors">Test connection</button>
+          <button id="jira-save" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold
+                  py-2 rounded-lg transition-colors">Save</button>
+        </div>
+        <p id="jira-status" class="text-xs hidden"></p>
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Once saved, type any Jira ID (e.g. <code class="text-slate-400">DOC-1234</code>) in the chat and DocMap will fetch it automatically.
+        </p>
+      </div>
+
+      <!-- Google Docs tab -->
+      <div id="conn-tab-gdoc" class="conn-pane hidden p-5 space-y-3">
+        <div class="rounded-lg bg-slate-800 border border-slate-700 p-4 text-sm text-slate-300 leading-relaxed space-y-2">
+          <p>Paste any Google Docs URL in the chat and DocMap will fetch the content automatically.</p>
+          <p class="text-slate-400">No setup needed for <strong class="text-slate-300">publicly shared</strong> documents.</p>
+          <p>For <strong class="text-slate-300">private docs</strong>: open the doc → Share → change to
+            <em>"Anyone with the link — Viewer"</em>.</p>
+        </div>
+        <p class="text-xs text-slate-500">Google OAuth support (for fully private docs) is planned for a future release.</p>
+      </div>
+
+      <!-- Files tab -->
+      <div id="conn-tab-files" class="conn-pane hidden p-5 space-y-3">
+        <div class="rounded-lg bg-slate-800 border border-slate-700 p-4 text-sm text-slate-300 leading-relaxed space-y-2">
+          <p>Type or paste a full file path in the chat and DocMap will read it via the local proxy.</p>
+          <p class="text-slate-500 text-xs">Supported: <code>.txt .md .json .yaml .csv .xml .docx .pdf</code> and most code file types.</p>
+        </div>
+        <div class="rounded-lg bg-amber-950/30 border border-amber-800/40 p-3 text-xs text-amber-300 leading-relaxed">
+          <strong class="text-amber-200">.docx</strong> and <strong class="text-amber-200">.pdf</strong> require extra packages:
+          <code class="block mt-1 font-mono text-amber-400">npm install mammoth pdf-parse</code>
+        </div>
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Example paths:<br/>
+          <code class="text-slate-400">C:\Users\You\Documents\spec.docx</code><br/>
+          <code class="text-slate-400">/Users/you/Documents/release-notes.md</code>
+        </p>
       </div>
     </div>
   </div>

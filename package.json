@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.600.0",
-    "@aws-sdk/client-bedrock": "^3.600.0"
+    "@aws-sdk/client-bedrock": "^3.600.0",
+    "mammoth": "^1.6.0",
+    "pdf-parse": "^1.1.1"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -1,15 +1,27 @@
 #!/usr/bin/env node
 /**
- * DocMap local proxy — routes requests from the browser to AWS Bedrock.
- * Run: node server.js  (credentials come from ~/.aws/credentials or env vars)
+ * DocMap local proxy
+ * - Routes to AWS Bedrock (with SigV4 auth)
+ * - Fetches Jira tickets
+ * - Reads local files (txt, md, docx, pdf, json, yaml, csv, xml…)
+ * - Fetches Google Docs (publicly shared)
+ *
+ * Run: node server.js
+ * Credentials: ~/.aws/credentials or AWS_* env vars
  */
 
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
+const http  = require('http');
+const https = require('https');
+const fs    = require('fs');
+const path  = require('path');
 
 const { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
 const { BedrockClient, ListFoundationModelsCommand } = require('@aws-sdk/client-bedrock');
+
+let mammoth   = null;
+let pdfParse  = null;
+try { mammoth  = require('mammoth');   } catch {}
+try { pdfParse = require('pdf-parse'); } catch {}
 
 const PORT   = Number(process.env.PORT   || 3001);
 const REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
@@ -17,7 +29,7 @@ const REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-e
 const bedrock     = new BedrockRuntimeClient({ region: REGION });
 const bedrockMgmt = new BedrockClient({ region: REGION });
 
-// ── Static file MIME types ────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'application/javascript',
@@ -27,131 +39,238 @@ const MIME = {
   '.svg':  'image/svg+xml',
 };
 
-// ── Request body reader ───────────────────────────────────────────────────────
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', chunk => { data += chunk; });
+    req.on('data', c => { data += c; });
     req.on('end',  () => resolve(data));
     req.on('error', reject);
   });
 }
 
-// ── CORS headers ──────────────────────────────────────────────────────────────
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin',  '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+function json(res, code, data) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+// ── httpsGet — wraps https.get as a Promise ───────────────────────────────────
+function httpsGet(url, headersObj = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: headersObj }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return resolve(httpsGet(res.headers.location, headersObj));
+      }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+  });
+}
+
+// ── Jira: extract text from Atlassian Document Format (ADF) ──────────────────
+function adfToText(node) {
+  if (!node) return '';
+  if (typeof node === 'string') return node;
+  let out = '';
+  if (node.type === 'text') out += node.text || '';
+  if (node.type === 'hardBreak') out += '\n';
+  if (node.content) {
+    out += node.content.map(adfToText).join('');
+    if (['paragraph','heading','bulletList','orderedList','listItem','blockquote','codeBlock'].includes(node.type)) {
+      out += '\n';
+    }
+  }
+  return out;
+}
+
 // ── Server ────────────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   cors(res);
-
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // ── Health check ──
-  if (req.url === '/api/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, region: REGION }));
-    return;
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const pathname = url.pathname;
+
+  // ── Health ──────────────────────────────────────────────────────────────────
+  if (pathname === '/api/health') {
+    return json(res, 200, {
+      ok: true, region: REGION,
+      mammoth: !!mammoth, pdf: !!pdfParse,
+    });
   }
 
-  // ── List available Claude models ──
-  if (req.url === '/api/models') {
+  // ── List Bedrock models ──────────────────────────────────────────────────────
+  if (pathname === '/api/models') {
     try {
       const result = await bedrockMgmt.send(new ListFoundationModelsCommand({ byProvider: 'Anthropic' }));
       const models = (result.modelSummaries || [])
         .filter(m => m.modelId.toLowerCase().includes('claude') && m.responseStreamingSupported)
         .map(m => ({ id: m.modelId, name: m.modelName || m.modelId }))
-        .sort((a, b) => b.id.localeCompare(a.id)); // newest first
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(models));
+        .sort((a, b) => b.id.localeCompare(a.id));
+      return json(res, 200, models);
     } catch (err) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      return json(res, 502, { error: err.message });
     }
-    return;
   }
 
-  // ── Bedrock proxy ──
-  if (req.method === 'POST' && req.url === '/api/bedrock') {
+  // ── Bedrock streaming ────────────────────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/api/bedrock') {
     let body;
-    try {
-      body = JSON.parse(await readBody(req));
-    } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'Invalid JSON body' } }));
-      return;
-    }
+    try { body = JSON.parse(await readBody(req)); }
+    catch { return json(res, 400, { error: { message: 'Invalid JSON' } }); }
 
     const { modelId, messages, system, max_tokens } = body;
-
-    if (!modelId || !messages) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'modelId and messages are required' } }));
-      return;
-    }
-
-    const payload = JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: max_tokens || 4096,
-      system:     system || '',
-      messages,
-    });
+    if (!modelId || !messages) return json(res, 400, { error: { message: 'modelId and messages are required' } });
 
     try {
       const command = new InvokeModelWithResponseStreamCommand({
         modelId,
-        body:        payload,
         contentType: 'application/json',
         accept:      'application/json',
+        body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: max_tokens || 4096, system: system || '', messages }),
       });
-
       const response = await bedrock.send(command);
-
-      // Stream response as SSE — same format the browser already parses
-      res.writeHead(200, {
-        'Content-Type':  'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection':    'keep-alive',
-      });
-
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
       for await (const event of response.body) {
         if (event.chunk?.bytes) {
-          try {
-            const decoded = JSON.parse(Buffer.from(event.chunk.bytes).toString('utf-8'));
-            res.write(`data: ${JSON.stringify(decoded)}\n\n`);
-          } catch {}
+          try { res.write(`data: ${JSON.stringify(JSON.parse(Buffer.from(event.chunk.bytes).toString('utf-8')))}\n\n`); } catch {}
         }
       }
-
       res.write('data: [DONE]\n\n');
       res.end();
-
     } catch (err) {
-      console.error('[Bedrock error]', err.message);
-      if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: err.message } }));
-      }
+      console.error('[Bedrock]', err.message);
+      if (!res.headersSent) json(res, 502, { error: { message: err.message } });
     }
     return;
   }
 
-  // ── Static files ──
-  const reqPath  = req.url === '/' ? '/index.html' : req.url.split('?')[0];
-  const filePath = path.join(__dirname, reqPath);
+  // ── Jira ticket fetch ────────────────────────────────────────────────────────
+  if (req.method === 'POST' && pathname === '/api/jira') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); }
+    catch { return json(res, 400, { error: 'Invalid JSON' }); }
 
-  // Prevent path traversal
-  if (!filePath.startsWith(__dirname)) {
-    res.writeHead(403); res.end('Forbidden'); return;
+    const { jiraUrl, email, token, ticketId } = body;
+    if (!jiraUrl || !email || !token || !ticketId) {
+      return json(res, 400, { error: 'jiraUrl, email, token, and ticketId are required' });
+    }
+
+    try {
+      const auth    = Buffer.from(`${email}:${token}`).toString('base64');
+      const apiUrl  = `${jiraUrl.replace(/\/$/, '')}/rest/api/3/issue/${ticketId}?fields=summary,description,status,priority,assignee,reporter,issuetype,labels,comment,attachment`;
+      const result  = await httpsGet(apiUrl, { Authorization: `Basic ${auth}`, Accept: 'application/json' });
+
+      if (result.status === 401) return json(res, 401, { error: 'Invalid Jira credentials' });
+      if (result.status === 404) return json(res, 404, { error: `Ticket ${ticketId} not found` });
+      if (result.status !== 200) return json(res, result.status, { error: `Jira returned ${result.status}` });
+
+      const data   = JSON.parse(result.body.toString('utf-8'));
+      const fields = data.fields;
+      const comments = (fields.comment?.comments || []).slice(-10).map(c => ({
+        author: c.author?.displayName || 'Unknown',
+        date:   c.created?.slice(0, 10),
+        text:   adfToText(c.body).trim(),
+      })).filter(c => c.text);
+
+      const ticket = {
+        id:          data.key,
+        summary:     fields.summary || '',
+        description: adfToText(fields.description).trim(),
+        status:      fields.status?.name || '',
+        priority:    fields.priority?.name || '',
+        type:        fields.issuetype?.name || '',
+        assignee:    fields.assignee?.displayName || 'Unassigned',
+        reporter:    fields.reporter?.displayName || '',
+        labels:      fields.labels || [],
+        comments,
+        url:         `${jiraUrl.replace(/\/$/, '')}/browse/${data.key}`,
+      };
+      return json(res, 200, ticket);
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
   }
+
+  // ── Local file read ──────────────────────────────────────────────────────────
+  if (pathname === '/api/file') {
+    const filePath = decodeURIComponent(url.searchParams.get('path') || '');
+    if (!filePath) return json(res, 400, { error: 'path parameter required' });
+
+    const ext = path.extname(filePath).toLowerCase();
+    const textExts = ['.txt','.md','.markdown','.json','.yaml','.yml','.csv','.xml','.html','.htm','.js','.ts','.py','.java','.cs','.go','.rb','.sh','.sql','.log'];
+
+    try {
+      if (textExts.includes(ext)) {
+        const content = await fs.promises.readFile(filePath, 'utf-8');
+        return json(res, 200, { name: path.basename(filePath), content, type: 'text' });
+      }
+
+      if (ext === '.docx') {
+        if (!mammoth) return json(res, 415, { error: 'Install mammoth to read .docx files: npm install mammoth' });
+        const result = await mammoth.extractRawText({ path: filePath });
+        return json(res, 200, { name: path.basename(filePath), content: result.value, type: 'text' });
+      }
+
+      if (ext === '.pdf') {
+        if (!pdfParse) return json(res, 415, { error: 'Install pdf-parse to read .pdf files: npm install pdf-parse' });
+        const buf  = await fs.promises.readFile(filePath);
+        const data = await pdfParse(buf);
+        return json(res, 200, { name: path.basename(filePath), content: data.text, type: 'text' });
+      }
+
+      return json(res, 415, { error: `Unsupported file type: ${ext}` });
+    } catch (err) {
+      const code = err.code === 'ENOENT' ? 404 : 500;
+      return json(res, code, { error: err.message });
+    }
+  }
+
+  // ── Google Docs fetch ────────────────────────────────────────────────────────
+  if (pathname === '/api/gdoc') {
+    const docUrl = decodeURIComponent(url.searchParams.get('url') || '');
+    const match  = docUrl.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+    if (!match) return json(res, 400, { error: 'Invalid Google Docs URL' });
+
+    const docId     = match[1];
+    const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=txt`;
+
+    try {
+      const result = await httpsGet(exportUrl);
+      if (result.status === 403 || result.status === 401) {
+        return json(res, 403, { error: 'Document is private. In Google Docs → Share → set to "Anyone with the link" → Viewer.' });
+      }
+      if (result.status !== 200) return json(res, result.status, { error: `Google returned ${result.status}` });
+
+      // Get title from a separate metadata request
+      let title = docId;
+      try {
+        const meta = await httpsGet(`https://docs.google.com/document/d/${docId}/pub?embedded=true`);
+        const titleMatch = meta.body.toString().match(/<title[^>]*>([^<]+)<\/title>/i);
+        if (titleMatch) title = titleMatch[1].replace(' - Google Docs', '').trim();
+      } catch {}
+
+      return json(res, 200, { title, content: result.body.toString('utf-8'), url: docUrl });
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
+  }
+
+  // ── Static files ──────────────────────────────────────────────────────────────
+  const reqPath  = pathname === '/' ? '/index.html' : pathname;
+  const filePath = path.join(__dirname, reqPath);
+  if (!filePath.startsWith(__dirname)) { res.writeHead(403); res.end('Forbidden'); return; }
 
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    const ext = path.extname(filePath).toLowerCase();
-    res.setHeader('Content-Type', MIME[ext] || 'text/plain');
+    res.setHeader('Content-Type', MIME[path.extname(filePath).toLowerCase()] || 'text/plain');
     res.writeHead(200);
     res.end(data);
   });
@@ -159,13 +278,10 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log('');
-  console.log('  DocMap proxy is running');
+  console.log('  DocMap proxy running');
   console.log(`  ➜  http://localhost:${PORT}`);
-  console.log(`  Region: ${REGION}`);
-  console.log('');
-  console.log('  AWS credentials loaded from:');
-  console.log('  · Environment variables  (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)');
-  console.log('  · Credentials file       (~/.aws/credentials)');
-  console.log('  · SSO / assumed role     (if you ran: aws sso login)');
+  console.log(`  Region : ${REGION}`);
+  console.log(`  .docx  : ${mammoth  ? '✓' : '✗  (run: npm install mammoth)'}`);
+  console.log(`  .pdf   : ${pdfParse ? '✓' : '✗  (run: npm install pdf-parse)'}`);
   console.log('');
 });

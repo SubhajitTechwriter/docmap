@@ -229,6 +229,49 @@
   color: #94a3b8;
 }
 
+/* ── Detect chips ── */
+.detect-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  border: 1px solid #334155;
+  background: #1e293b;
+  animation: fadeUp 0.15s ease;
+}
+.detect-chip.pending  { border-color: #475569; }
+.detect-chip.fetching { border-color: #4338ca; background: #1e1b4b; }
+.detect-chip.fetched  { border-color: #166534; background: #14532d22; }
+
+.detect-icon   { font-size: 0.8rem; }
+.detect-label  { color: #cbd5e1; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detect-fetch  { color: #818cf8; background: none; border: none; cursor: pointer; font-size: 0.7rem; font-weight: 600; padding: 0 2px; transition: color 0.15s; }
+.detect-fetch:hover { color: #a5b4fc; }
+.detect-loading { color: #6366f1; font-size: 0.7rem; }
+.detect-done   { color: #4ade80; font-size: 0.7rem; font-weight: 600; }
+.detect-dismiss { color: #475569; background: none; border: none; cursor: pointer; font-size: 0.9rem; line-height: 1; padding: 0 1px; transition: color 0.15s; }
+.detect-dismiss:hover { color: #94a3b8; }
+
+/* ── Connections modal tabs ── */
+.conn-tab {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.conn-tab:hover  { color: #94a3b8; }
+.conn-tab.active { color: #818cf8; border-bottom-color: #6366f1; }
+.conn-pane { display: block; }
+.conn-pane.hidden { display: none; }
+
 /* ── Cytoscape container ── */
 #cy {
   width: 100%;
