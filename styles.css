@@ -19,6 +19,25 @@
 .legend-dot.bg-red-500::before    { background: #ef4444; }
 .legend-dot.bg-blue-500::before   { background: #3b82f6; }
 
+/* Provider toggle buttons (setup screen) */
+.provider-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.provider-btn.active {
+  background: #6366f1;
+  color: white;
+}
+.provider-btn:not(.active):hover { color: #94a3b8; }
+
 /* Control buttons */
 .ctrl-btn {
   display: inline-flex;

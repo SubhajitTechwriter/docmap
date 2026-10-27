@@ -1,18 +1,24 @@
 /* ── DocMap application ── */
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const STORAGE_KEY_API  = 'docmap_api_key';
-const STORAGE_KEY_MODEL = 'docmap_model';
+const STORAGE_KEY_API          = 'docmap_api_key';
+const STORAGE_KEY_MODEL        = 'docmap_model';
+const STORAGE_KEY_PROVIDER     = 'docmap_provider';
+const STORAGE_KEY_PROXY_URL    = 'docmap_proxy_url';
+const STORAGE_KEY_BEDROCK_MODEL = 'docmap_bedrock_model';
 
 // ── State ────────────────────────────────────────────────────────────────────
 const state = {
-  apiKey:      localStorage.getItem(STORAGE_KEY_API)   || null,
-  model:       localStorage.getItem(STORAGE_KEY_MODEL) || 'claude-sonnet-5-5',
-  messages:    [],        // Claude conversation history
-  pendingFiles: [],       // { type: 'image'|'text', name, dataUrl?, text?, mediaType? }
-  cy:          null,
-  activeNode:  null,
-  isStreaming: false,
+  apiKey:        localStorage.getItem(STORAGE_KEY_API)           || null,
+  model:         localStorage.getItem(STORAGE_KEY_MODEL)         || 'claude-sonnet-5-5',
+  provider:      localStorage.getItem(STORAGE_KEY_PROVIDER)      || 'anthropic',
+  proxyUrl:      localStorage.getItem(STORAGE_KEY_PROXY_URL)     || 'http://localhost:3001',
+  bedrockModel:  localStorage.getItem(STORAGE_KEY_BEDROCK_MODEL) || 'us.anthropic.claude-sonnet-4-5-20260101-v1:0',
+  messages:      [],
+  pendingFiles:  [],
+  cy:            null,
+  activeNode:    null,
+  isStreaming:   false,
 };
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
@@ -81,65 +87,115 @@ RULES:
 
 // ── Setup screen ──────────────────────────────────────────────────────────────
 function initSetup() {
-  if (state.apiKey) { launchApp(); return; }
+  // If already configured, skip setup
+  const alreadyConfigured = state.provider === 'anthropic' ? !!state.apiKey
+                          : !!state.bedrockModel;
+  if (alreadyConfigured) { launchApp(); return; }
 
-  $('setup-model').value = state.model;
-  $('setup-model').addEventListener('change', () => {
-    state.model = $('setup-model').value;
+  // Restore saved provider tab
+  setProviderTab(state.provider);
+
+  // Provider toggle
+  document.querySelectorAll('.provider-btn').forEach(btn => {
+    btn.addEventListener('click', () => setProviderTab(btn.dataset.provider));
   });
 
-  $('setup-btn').addEventListener('click', saveKey);
-  $('setup-key').addEventListener('keydown', e => { if (e.key === 'Enter') saveKey(); });
+  // Anthropic: model selector
+  if ($('setup-model')) {
+    $('setup-model').value = state.model;
+    $('setup-model').addEventListener('change', () => { state.model = $('setup-model').value; });
+  }
+
+  // Bedrock: show/hide custom model input
+  $('bedrock-model-select').value = state.bedrockModel || 'us.anthropic.claude-sonnet-4-5-20260101-v1:0';
+  $('bedrock-model-select').addEventListener('change', () => {
+    const isCustom = $('bedrock-model-select').value === 'custom';
+    $('bedrock-model-custom').classList.toggle('hidden', !isCustom);
+  });
+
+  $('setup-btn').addEventListener('click', saveSettings);
+  $('setup-key').addEventListener('keydown', e => { if (e.key === 'Enter') saveSettings(); });
 }
 
-async function saveKey() {
-  const key = $('setup-key').value.trim();
+function setProviderTab(provider) {
+  state.provider = provider;
+  document.querySelectorAll('.provider-btn').forEach(b => b.classList.toggle('active', b.dataset.provider === provider));
+  $('setup-anthropic').classList.toggle('hidden', provider !== 'anthropic');
+  $('setup-bedrock').classList.toggle('hidden',   provider !== 'bedrock');
+}
+
+async function saveSettings() {
   const errEl = $('setup-error');
   errEl.classList.add('hidden');
-
-  if (!key.startsWith('sk-ant-')) {
-    errEl.textContent = 'Key should start with sk-ant-';
-    errEl.classList.remove('hidden');
-    return;
-  }
-
   const btn = $('setup-btn');
   btn.disabled = true;
-  btn.textContent = 'Verifying…';
+  btn.textContent = 'Connecting…';
 
   try {
-    const resp = await fetch(API_URL, {
-      method: 'POST',
-      headers: buildHeaders(key),
-      body: JSON.stringify({ model: state.model, max_tokens: 3, messages: [{ role: 'user', content: 'Hi' }] })
-    });
-    if (resp.status === 401) throw new Error('auth');
-    // any other status (including 400 from tiny max_tokens) means key is valid
-  } catch (e) {
-    if (e.message === 'auth') {
-      btn.disabled = false;
-      btn.textContent = 'Get started';
-      errEl.textContent = 'Invalid API key — please check and try again.';
-      errEl.classList.remove('hidden');
-      return;
+    if (state.provider === 'anthropic') {
+      const key = $('setup-key').value.trim();
+      if (!key.startsWith('sk-ant-')) throw new Error('Key should start with sk-ant-');
+
+      // Quick validation ping
+      try {
+        const resp = await fetch(API_URL, {
+          method: 'POST',
+          headers: buildHeaders(key),
+          body: JSON.stringify({ model: state.model, max_tokens: 3, messages: [{ role: 'user', content: 'Hi' }] }),
+        });
+        if (resp.status === 401) throw new Error('Invalid API key — check and try again.');
+      } catch (e) {
+        if (e.message.includes('Invalid API')) throw e;
+        // Network error etc — proceed
+      }
+
+      state.apiKey = key;
+      state.model  = $('setup-model')?.value || state.model;
+      localStorage.setItem(STORAGE_KEY_API,   state.apiKey);
+      localStorage.setItem(STORAGE_KEY_MODEL, state.model);
+
+    } else {
+      // Bedrock via local proxy
+      const proxyUrl = $('bedrock-proxy').value.trim().replace(/\/$/, '');
+      const modelId  = $('bedrock-model-select').value === 'custom'
+        ? $('bedrock-model-custom').value.trim()
+        : $('bedrock-model-select').value;
+
+      if (!modelId) throw new Error('Please enter a model ID.');
+
+      // Ping the proxy health endpoint
+      try {
+        const ping = await fetch(`${proxyUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
+        if (!ping.ok) throw new Error('bad');
+      } catch {
+        throw new Error(`Cannot reach proxy at ${proxyUrl} — run npm start first.`);
+      }
+
+      state.proxyUrl     = proxyUrl;
+      state.bedrockModel = modelId;
+      localStorage.setItem(STORAGE_KEY_PROVIDER,      'bedrock');
+      localStorage.setItem(STORAGE_KEY_PROXY_URL,     proxyUrl);
+      localStorage.setItem(STORAGE_KEY_BEDROCK_MODEL, modelId);
     }
-    // network error or other — proceed anyway
+
+    localStorage.setItem(STORAGE_KEY_PROVIDER, state.provider);
+    launchApp();
+
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Continue →';
   }
-
-  state.apiKey = key;
-  state.model  = $('setup-model').value;
-  localStorage.setItem(STORAGE_KEY_API,   state.apiKey);
-  localStorage.setItem(STORAGE_KEY_MODEL, state.model);
-
-  btn.disabled = false;
-  btn.textContent = 'Get started';
-  launchApp();
 }
 
 function launchApp() {
   $('setup-overlay').classList.add('hidden');
   $('app').classList.remove('hidden');
-  $('header-model').textContent = state.model;
+  $('header-model').textContent = state.provider === 'bedrock'
+    ? `bedrock · ${state.bedrockModel.split('.').pop()}`
+    : state.model;
   showWelcome();
 }
 
@@ -368,16 +424,16 @@ function buildHeaders(key) {
 }
 
 async function callClaudeStream(messages, system, onPartial) {
+  return state.provider === 'bedrock'
+    ? callBedrockStream(messages, system, onPartial)
+    : callAnthropicStream(messages, system, onPartial);
+}
+
+async function callAnthropicStream(messages, system, onPartial) {
   const response = await fetch(API_URL, {
     method: 'POST',
     headers: buildHeaders(),
-    body: JSON.stringify({
-      model: state.model,
-      max_tokens: 4096,
-      stream: true,
-      system,
-      messages,
-    }),
+    body: JSON.stringify({ model: state.model, max_tokens: 4096, stream: true, system, messages }),
   });
 
   if (!response.ok) {
@@ -385,6 +441,26 @@ async function callClaudeStream(messages, system, onPartial) {
     throw new Error(errData.error?.message || `HTTP ${response.status}`);
   }
 
+  return consumeSSE(response, onPartial);
+}
+
+async function callBedrockStream(messages, system, onPartial) {
+  const response = await fetch(`${state.proxyUrl}/api/bedrock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ modelId: state.bedrockModel, messages, system, max_tokens: 4096 }),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error?.message || `Proxy error ${response.status} — is the local server running?`);
+  }
+
+  return consumeSSE(response, onPartial);
+}
+
+// Shared SSE consumer — works for both Anthropic and Bedrock proxy
+async function consumeSSE(response, onPartial) {
   const reader  = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer   = '';
@@ -406,7 +482,6 @@ async function callClaudeStream(messages, system, onPartial) {
         const ev = JSON.parse(json);
         if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
           fullText += ev.delta.text;
-          // Stream display text without the mindmap JSON block
           const { displayText } = extractMindmap(fullText);
           onPartial(displayText);
         }
@@ -704,14 +779,15 @@ function initEvents() {
     showWelcome();
   });
 
-  // Change key
+  // Change key / settings
   $('btn-change-key').addEventListener('click', () => {
-    localStorage.removeItem(STORAGE_KEY_API);
+    [STORAGE_KEY_API, STORAGE_KEY_PROVIDER, STORAGE_KEY_PROXY_URL, STORAGE_KEY_BEDROCK_MODEL].forEach(k => localStorage.removeItem(k));
     state.apiKey = null;
     state.messages = [];
     $('app').classList.add('hidden');
     $('setup-overlay').classList.remove('hidden');
     $('setup-key').value = '';
+    setProviderTab(state.provider);
   });
 
   // Modal
