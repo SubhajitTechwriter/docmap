@@ -255,6 +255,33 @@ function launchApp() {
     : state.model;
   showWelcome();
   loadDocsSitemap(); // fire-and-forget; updates system prompt when ready
+  initPanelResize();
+}
+
+function initPanelResize() {
+  const divider  = $('panel-divider');
+  const chatPane = $('chat-panel');
+  if (!divider || !chatPane) return;
+  let dragging = false;
+
+  divider.addEventListener('mousedown', e => {
+    dragging = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const rect = $('app').getBoundingClientRect();
+    const pct  = (e.clientX - rect.left) / rect.width * 100;
+    chatPane.style.width = Math.max(18, Math.min(62, pct)) + '%';
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
 }
 
 async function loadDocsSitemap() {
@@ -637,11 +664,11 @@ function extractMindmap(text) {
 
 // ── Mind Map rendering ─────────────────────────────────────────────────────────
 const NODE_STYLE = {
-  center:    { bg: '#3730a3', border: '#818cf8', text: '#e0e7ff' },
-  create:    { bg: '#14532d', border: '#22c55e', text: '#86efac' },
-  modify:    { bg: '#78350f', border: '#f59e0b', text: '#fcd34d' },
-  delete:    { bg: '#7f1d1d', border: '#ef4444', text: '#fca5a5' },
-  reference: { bg: '#1e3a5f', border: '#3b82f6', text: '#93c5fd' },
+  center:    { bg: '#7c3aed', border: '#c4b5fd', text: '#ffffff' },
+  create:    { bg: '#059669', border: '#6ee7b7', text: '#ffffff' },
+  modify:    { bg: '#b45309', border: '#fcd34d', text: '#ffffff' },
+  delete:    { bg: '#b91c1c', border: '#fca5a5', text: '#ffffff' },
+  reference: { bg: '#1d4ed8', border: '#93c5fd', text: '#ffffff' },
 };
 
 function renderMindMap(data) {
@@ -680,16 +707,21 @@ function renderMindMap(data) {
     layout: {
       name: 'cose',
       animate: true,
-      animationDuration: 700,
-      randomize: true,
-      nodeRepulsion: () => 12000,
-      nodeOverlap: 30,
-      idealEdgeLength: () => 200,
-      edgeElasticity: () => 80,
-      gravity: 60,
-      numIter: 1200,
+      animationDuration: 800,
+      randomize: false,
+      nodeRepulsion: () => 20000,
+      nodeOverlap: 24,
+      idealEdgeLength: () => 180,
+      edgeElasticity: () => 100,
+      nestingFactor: 5,
+      gravity: 50,
+      numIter: 1000,
+      initialTemp: 200,
+      coolingFactor: 0.95,
+      minTemp: 1.0,
       fit: true,
-      padding: 70,
+      padding: 80,
+      componentSpacing: 80,
     },
     minZoom: 0.25,
     maxZoom: 3,
@@ -722,30 +754,30 @@ function center() {
 }
 
 function buildStyle() {
-  const shared = {
-    'label': 'data(label)',
-    'text-wrap': 'wrap',
-    'text-max-width': '100px',
-    'text-valign': 'center',
-    'text-halign': 'center',
-    'font-size': '11px',
-    'font-weight': '600',
-    'font-family': 'ui-sans-serif, system-ui, sans-serif',
-    'width': '120px',
-    'height': '46px',
-    'shape': 'round-rectangle',
-    'border-width': '2px',
-    'cursor': 'pointer',
-  };
-
   const nodeStyles = Object.entries(NODE_STYLE).map(([type, colors]) => ({
     selector: type === 'center' ? 'node[type="center"]' : `node[type="${type}"]`,
     style: {
-      ...shared,
+      'label': 'data(label)',
+      'text-wrap': 'wrap',
+      'text-max-width': type === 'center' ? '150px' : '120px',
+      'text-valign': 'center',
+      'text-halign': 'center',
+      'font-size': type === 'center' ? '13px' : '11px',
+      'font-weight': '700',
+      'font-family': 'ui-sans-serif, system-ui, sans-serif',
+      'width':  type === 'center' ? '170px' : '145px',
+      'height': type === 'center' ? '60px'  : '48px',
+      'shape': 'round-rectangle',
       'background-color': colors.bg,
       'border-color': colors.border,
+      'border-width': type === 'center' ? '3px' : '2px',
       'color': colors.text,
-      ...(type === 'center' ? { 'width': '140px', 'height': '54px', 'font-size': '12px' } : {}),
+      'cursor': 'pointer',
+      'shadow-blur': 16,
+      'shadow-color': colors.bg,
+      'shadow-opacity': 0.55,
+      'shadow-offset-x': 0,
+      'shadow-offset-y': 3,
     },
   }));
 
@@ -753,23 +785,24 @@ function buildStyle() {
     ...nodeStyles,
     {
       selector: 'node:selected',
-      style: { 'border-width': '3px', 'border-color': '#f8fafc', 'overlay-opacity': 0 },
+      style: { 'border-width': '3px', 'border-color': '#f8fafc', 'shadow-opacity': 0.9, 'overlay-opacity': 0 },
     },
     {
       selector: 'edge',
       style: {
-        'width': 1.5,
-        'line-color': '#1e3a5f',
-        'target-arrow-color': '#1e3a5f',
-        'target-arrow-shape': 'triangle',
-        'arrow-scale': 0.7,
+        'width': 2,
+        'line-color': '#475569',
+        'target-arrow-color': '#475569',
+        'target-arrow-shape': 'vee',
+        'arrow-scale': 0.9,
         'curve-style': 'bezier',
         'label': 'data(label)',
         'font-size': '9px',
-        'color': '#475569',
-        'text-background-color': '#020617',
-        'text-background-opacity': 0.85,
+        'color': '#94a3b8',
+        'text-background-color': '#0d1117',
+        'text-background-opacity': 0.9,
         'text-background-padding': '2px',
+        'opacity': 0.75,
       },
     },
   ];

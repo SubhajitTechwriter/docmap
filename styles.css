@@ -276,7 +276,8 @@
 #cy {
   width: 100%;
   height: 100%;
-  background: #020617;
+  background: #0d1117;
+  background-image: radial-gradient(circle at 50% 50%, #131c2e 0%, #0d1117 70%);
 }
 
 /* ── Scrollbar ── */
