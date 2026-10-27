@@ -22,6 +22,7 @@ const state = {
     email: localStorage.getItem(STORAGE_KEY_JIRA_EMAIL) || '',
     token: localStorage.getItem(STORAGE_KEY_JIRA_TOKEN) || '',
   },
+  docsSitemap:   null, // { totalPages, summary, urls[] } — loaded on launch
   messages:      [],
   pendingFiles:  [],
   detections:    {},   // key → { type, value, status: 'pending'|'fetched'|'dismissed' }
@@ -35,9 +36,22 @@ const $  = id => document.getElementById(id);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e; };
 
 // ── System prompt ─────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are DocMap, an expert documentation strategist who helps technical writers plan content changes. You combine the insight of a senior doc lead with a clear understanding of product docs structure.
+// Built dynamically — includes the live docs sitemap when available
+function buildSystemPrompt() {
+  const base = `You are DocMap, an expert documentation strategist for SnapLogic. You help technical writers plan content changes for docs.snaplogic.com. You combine the insight of a senior doc lead with deep knowledge of the SnapLogic documentation structure.
 
-ROLE: Analyze any input (Jira tickets, GitHub repos, release notes, specs, images, or plain descriptions) and help the writer understand exactly what documentation needs to be created, modified, removed, or cross-referenced.
+ROLE: Analyze any input (Jira tickets, GitHub repos, release notes, specs, images, or plain descriptions) and tell the writer exactly what documentation needs to be created, modified, removed, or cross-referenced — including the specific page URLs on docs.snaplogic.com.`;
+
+  const docsCtx = state.docsSitemap
+    ? `\n\nDOCS.SNAPLOGIC.COM STRUCTURE (live index — ${state.docsSitemap.totalPages} pages):\n${state.docsSitemap.summary}\n\nFull URL list is available. When suggesting pages to update or create, always reference specific paths from this structure. Do NOT ask the writer where content lives — look it up from the index above.`
+    : '\n\n(Documentation site index not loaded — proxy may not be running.)';
+
+  return base + docsCtx + SYSTEM_PROMPT_TAIL;
+}
+
+const SYSTEM_PROMPT_TAIL = `
+
+CONVERSATION STYLE:
 
 CONVERSATION STYLE:
 - Be warm but concise. Ask focused clarifying questions (1-2 at a time, never a list of 5).
@@ -240,6 +254,22 @@ function launchApp() {
     ? `bedrock · ${state.bedrockModel.split('.').pop()}`
     : state.model;
   showWelcome();
+  loadDocsSitemap(); // fire-and-forget; updates system prompt when ready
+}
+
+async function loadDocsSitemap() {
+  const proxy = state.proxyUrl || 'http://localhost:3001';
+  try {
+    const resp = await fetch(`${proxy}/api/sitemap`);
+    if (!resp.ok) return;
+    state.docsSitemap = await resp.json();
+    // Update the model label to show docs are loaded
+    const lbl = $('header-model');
+    lbl.textContent = lbl.textContent.replace(' · docs ✓', '') + ' · docs ✓';
+    console.log(`[DocMap] Loaded ${state.docsSitemap.totalPages} docs pages from sitemap`);
+  } catch {
+    // Proxy not running or no sitemap — silently skip
+  }
 }
 
 // ── Welcome message ───────────────────────────────────────────────────────────
@@ -450,7 +480,7 @@ async function sendMessage() {
   showTyping();
 
   try {
-    const fullResponse = await callClaudeStream(state.messages, SYSTEM_PROMPT, (partial) => {
+    const fullResponse = await callClaudeStream(state.messages, buildSystemPrompt(), (partial) => {
       updateStreamingBubble(partial);
     });
     removeTyping();

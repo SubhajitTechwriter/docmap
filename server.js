@@ -106,6 +106,54 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
+  // ── docs.snaplogic.com sitemap ──────────────────────────────────────────────
+  if (pathname === '/api/sitemap') {
+    try {
+      // Fetch the sitemap (may be an index pointing to sub-sitemaps)
+      async function fetchSitemapUrls(sitemapUrl, depth = 0) {
+        const r = await httpsGet(sitemapUrl);
+        if (r.status !== 200) throw new Error(`${sitemapUrl} returned ${r.status}`);
+        const xml = r.body.toString('utf-8');
+        if (xml.includes('<sitemapindex') && depth === 0) {
+          // It's an index — fetch each sub-sitemap (limit 10)
+          const subUrls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1].trim()).slice(0, 10);
+          const all = [];
+          for (const su of subUrls) {
+            try { all.push(...await fetchSitemapUrls(su, 1)); } catch {}
+          }
+          return all;
+        }
+        return [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1].trim());
+      }
+
+      const allUrls = await fetchSitemapUrls('https://docs.snaplogic.com/sitemap.xml');
+
+      // Group by first path segment
+      const sections = {};
+      for (const u of allUrls) {
+        try {
+          const parts = new URL(u).pathname.replace(/^\//, '').split('/');
+          const sec = parts[0] || 'root';
+          if (!sections[sec]) sections[sec] = [];
+          sections[sec].push(u);
+        } catch {}
+      }
+
+      // Build a concise summary for Claude's context
+      const summary = Object.entries(sections)
+        .sort((a, b) => b[1].length - a[1].length)
+        .map(([sec, urls]) => {
+          const examples = urls.slice(0, 4).map(u => new URL(u).pathname).join('\n    ');
+          return `/${sec}/  (${urls.length} pages)\n    ${examples}`;
+        })
+        .join('\n\n');
+
+      return json(res, 200, { totalPages: allUrls.length, summary, urls: allUrls });
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
+  }
+
   // ── List Bedrock models ──────────────────────────────────────────────────────
   if (pathname === '/api/models') {
     try {
@@ -129,6 +177,7 @@ const server = http.createServer(async (req, res) => {
     const { modelId, messages, system, max_tokens } = body;
     if (!modelId || !messages) return json(res, 400, { error: { message: 'modelId and messages are required' } });
 
+    console.log(`[Bedrock] invoking model: ${modelId}`);
     try {
       const command = new InvokeModelWithResponseStreamCommand({
         modelId,
