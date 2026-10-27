@@ -13,7 +13,7 @@ const state = {
   model:         localStorage.getItem(STORAGE_KEY_MODEL)         || 'claude-sonnet-5-5',
   provider:      localStorage.getItem(STORAGE_KEY_PROVIDER)      || 'anthropic',
   proxyUrl:      localStorage.getItem(STORAGE_KEY_PROXY_URL)     || 'http://localhost:3001',
-  bedrockModel:  localStorage.getItem(STORAGE_KEY_BEDROCK_MODEL) || 'us.anthropic.claude-sonnet-4-5-20260101-v1:0',
+  bedrockModel:  localStorage.getItem(STORAGE_KEY_BEDROCK_MODEL) || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
   messages:      [],
   pendingFiles:  [],
   cy:            null,
@@ -106,11 +106,45 @@ function initSetup() {
     $('setup-model').addEventListener('change', () => { state.model = $('setup-model').value; });
   }
 
-  // Bedrock: show/hide custom model input
-  $('bedrock-model-select').value = state.bedrockModel || 'us.anthropic.claude-sonnet-4-5-20260101-v1:0';
+  // Bedrock: show/hide custom model input, handle "Load" button
+  $('bedrock-model-select').value = state.bedrockModel || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
   $('bedrock-model-select').addEventListener('change', () => {
     const isCustom = $('bedrock-model-select').value === 'custom';
     $('bedrock-model-custom').classList.toggle('hidden', !isCustom);
+  });
+
+  $('bedrock-fetch-models').addEventListener('click', async () => {
+    const proxyUrl = $('bedrock-proxy').value.trim().replace(/\/$/, '') || 'http://localhost:3001';
+    const btn = $('bedrock-fetch-models');
+    btn.disabled = true;
+    btn.textContent = '…';
+    const errEl = $('setup-error');
+    errEl.classList.add('hidden');
+    try {
+      const res  = await fetch(`${proxyUrl}/api/models`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (!data.length) throw new Error('No Claude models found. Check your Bedrock model access permissions.');
+      const sel = $('bedrock-model-select');
+      // Remove old dynamic options (keep static ones + custom)
+      Array.from(sel.options).filter(o => o.dataset.dynamic).forEach(o => o.remove());
+      // Prepend fetched models
+      data.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `${m.name || m.id}`;
+        opt.dataset.dynamic = '1';
+        sel.insertBefore(opt, sel.firstChild);
+      });
+      sel.value = data[0].id;
+      $('bedrock-model-custom').classList.add('hidden');
+    } catch (e) {
+      errEl.textContent = 'Load failed: ' + e.message;
+      errEl.classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '↻ Load';
+    }
   });
 
   $('setup-btn').addEventListener('click', saveSettings);
@@ -157,9 +191,10 @@ async function saveSettings() {
     } else {
       // Bedrock via local proxy
       const proxyUrl = $('bedrock-proxy').value.trim().replace(/\/$/, '');
-      const modelId  = $('bedrock-model-select').value === 'custom'
+      const selVal  = $('bedrock-model-select').value;
+      const modelId = selVal === 'custom'
         ? $('bedrock-model-custom').value.trim()
-        : $('bedrock-model-select').value;
+        : selVal;
 
       if (!modelId) throw new Error('Please enter a model ID.');
 

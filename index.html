@@ -61,17 +61,25 @@
         <div id="setup-bedrock" class="hidden space-y-3">
           <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Model ID</label>
-            <select id="bedrock-model-select"
-              class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-300 text-xs
-                     focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer mb-1.5">
-              <option value="us.anthropic.claude-opus-4-5-20260101-v1:0">Claude Opus 4.5 (cross-region)</option>
-              <option value="us.anthropic.claude-sonnet-4-5-20260101-v1:0">Claude Sonnet 4.5 (cross-region)</option>
-              <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">Claude 3.5 Sonnet v2</option>
-              <option value="anthropic.claude-3-opus-20240229-v1:0">Claude 3 Opus</option>
-              <option value="anthropic.claude-3-haiku-20240307-v1:0">Claude 3 Haiku</option>
-              <option value="custom">Custom model ID…</option>
-            </select>
-            <input id="bedrock-model-custom" type="text" placeholder="anthropic.claude-..."
+            <div class="flex gap-1.5 mb-1.5">
+              <select id="bedrock-model-select"
+                class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-300 text-xs
+                       focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer">
+                <option value="us.anthropic.claude-3-5-sonnet-20241022-v2:0">Claude 3.5 Sonnet v2 (cross-region)</option>
+                <option value="us.anthropic.claude-3-5-haiku-20241022-v1:0">Claude 3.5 Haiku (cross-region)</option>
+                <option value="us.anthropic.claude-3-opus-20240229-v1:0">Claude 3 Opus (cross-region)</option>
+                <option value="anthropic.claude-3-5-sonnet-20241022-v2:0">Claude 3.5 Sonnet v2 (single-region)</option>
+                <option value="anthropic.claude-3-opus-20240229-v1:0">Claude 3 Opus</option>
+                <option value="anthropic.claude-3-haiku-20240307-v1:0">Claude 3 Haiku</option>
+                <option value="custom">Custom model ID…</option>
+              </select>
+              <button id="bedrock-fetch-models" title="Fetch models available in your account"
+                class="flex-shrink-0 px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs
+                       rounded-lg transition-colors border border-slate-600 whitespace-nowrap">
+                ↻ Load
+              </button>
+            </div>
+            <input id="bedrock-model-custom" type="text" placeholder="e.g. anthropic.claude-3-5-sonnet-20241022-v2:0"
               class="hidden w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500
                      focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-mono" />
           </div>

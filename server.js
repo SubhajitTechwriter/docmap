@@ -9,11 +9,13 @@ const fs   = require('fs');
 const path = require('path');
 
 const { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
+const { BedrockClient, ListFoundationModelsCommand } = require('@aws-sdk/client-bedrock');
 
 const PORT   = Number(process.env.PORT   || 3001);
 const REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
 
-const bedrock = new BedrockRuntimeClient({ region: REGION });
+const bedrock     = new BedrockRuntimeClient({ region: REGION });
+const bedrockMgmt = new BedrockClient({ region: REGION });
 
 // ── Static file MIME types ────────────────────────────────────────────────────
 const MIME = {
@@ -52,6 +54,23 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, region: REGION }));
+    return;
+  }
+
+  // ── List available Claude models ──
+  if (req.url === '/api/models') {
+    try {
+      const result = await bedrockMgmt.send(new ListFoundationModelsCommand({ byProvider: 'Anthropic' }));
+      const models = (result.modelSummaries || [])
+        .filter(m => m.modelId.toLowerCase().includes('claude') && m.responseStreamingSupported)
+        .map(m => ({ id: m.modelId, name: m.modelName || m.modelId }))
+        .sort((a, b) => b.id.localeCompare(a.id)); // newest first
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(models));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
