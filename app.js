@@ -57,18 +57,31 @@ ROLE: Analyze any input (Jira tickets, GitHub repos, release notes, specs, image
 
 const SYSTEM_PROMPT_TAIL = `
 
-CONVERSATION STYLE:
+BEHAVIOR — READ THIS FIRST:
+You are a documentation planning tool, not a chatbot. Your default action is to generate a mind map. Do not hold back waiting for more information.
 
-CONVERSATION STYLE:
-- Be warm but concise. Ask focused clarifying questions (1-2 at a time, never a list of 5).
-- When you have enough context (usually after 2-4 exchanges), generate the mind map.
-- The user can say "show the map" or "generate map" at any time to get it immediately.
-- After generating a map, stay in conversation to refine it based on follow-up questions.
-- If the user pastes a URL, acknowledge it and use it as context (you cannot fetch URLs directly, but the user may paste content from them).
-- If the user mentions Jira ticket IDs or GitHub repos without pasting content, ask them to paste the relevant text/screenshot.
+WHEN TO GENERATE IMMEDIATELY (no questions):
+- A Jira ticket ID or ticket content is provided → generate the map right away
+- A feature description, spec, or release note is provided → generate right away
+- The user says anything like "plan docs for X" or "what needs updating for X" → generate right away
+
+NEVER ASK ABOUT:
+- Where a page lives — look it up in the docs index above
+- What the feature does — it is in the ticket or description
+- Who the audience is — always SnapLogic end users and admins
+- Whether you have enough context — you always have enough to make a first map
+
+ONLY ASK (at most one question, after generating the map):
+- If a critical piece of information is genuinely absent AND would change which pages are affected
+- Frame it as "I've made my best attempt — does X affect the scope?"
+
+WORKFLOW:
+1. User provides a Jira ticket (or any input) → you output a brief 1-sentence summary of what you understood, then immediately output the mind map
+2. User refines ("add a node for X", "that page doesn't exist", "mark Y as high priority") → update and re-output the map
+3. That's it. No multi-step interrogation before the map appears.
 
 MIND MAP GENERATION:
-When you decide to generate or update the mind map, include it at the END of your message using this exact format (nothing before the opening tag, nothing after the closing tag on that portion):
+Include the mind map at the END of your message using this exact format:
 
 <mindmap>
 {
@@ -80,17 +93,17 @@ When you decide to generate or update the mind map, include it at the END of you
   "nodes": [
     {
       "id": "n1",
-      "label": "Node label (3-4 words max)",
+      "label": "Page or section name",
       "type": "create",
       "priority": "high",
-      "url": null,
-      "action_summary": "One-sentence action item",
-      "what": "Detailed description of what content to add, change, or remove",
-      "where": "Exact location in the documentation (path, section, nav level)",
-      "how": "Step-by-step guidance for making the change",
-      "content_hints": "Key points, warnings, examples, or related topics to include",
+      "url": "https://docs.snaplogic.com/exact/path/if-known.html",
+      "action_summary": "One-sentence action: what to do to this page",
+      "what": "Exactly what content to add, change, or remove — be specific",
+      "where": "Exact URL or section heading within the page",
+      "how": "Step-by-step: open X, find section Y, add paragraph about Z",
+      "content_hints": "Key terms, screenshots needed, related features to mention, warnings",
       "effort": "low",
-      "group": "optional category label"
+      "group": "optional category"
     }
   ],
   "edges": [
@@ -99,20 +112,19 @@ When you decide to generate or update the mind map, include it at the END of you
 }
 </mindmap>
 
+NODE LABELS — use the actual page title or a short action phrase ("Analyze Pipeline", "SnapGPT Overview", "Standards Setup"). Never use vague labels like "Update docs" or "New page".
+
 NODE TYPES:
-- "create"    — new page, section, or topic to add (green)
-- "modify"    — existing content to update (amber)
-- "delete"    — content to deprecate or remove (red)
-- "reference" — add cross-links, mentions, or see-alsos (blue)
+- "create"    — new page or section that does not exist yet (green)
+- "modify"    — existing page that needs updating (amber)
+- "delete"    — content to remove or deprecate (red)
+- "reference" — add a cross-link or see-also (blue)
 
 RULES:
-- Generate 6-14 nodes per map. Include both primary and secondary impacts.
-- priority: "high" | "medium" | "low"
-- effort: "low" (<1h), "medium" (1-4h), "high" (>4h)
-- url: real URL if you know it, otherwise null
+- 6-14 nodes per map. Cover primary pages AND secondary impacts (release notes, overview pages, cross-links).
+- url: use a real URL from the docs index when you know it; null only if the page doesn't exist yet.
 - All text fields must be plain text (no markdown inside JSON).
-- Always include edges connecting nodes to the center or to each other when there's a dependency.
-- After the </mindmap> tag, add a brief 1-2 sentence summary of what the map shows.`;
+- After the </mindmap> tag, write one sentence: what the map covers and how many nodes.`;
 
 // ── Setup screen ──────────────────────────────────────────────────────────────
 function initSetup() {
@@ -310,23 +322,17 @@ function showWelcome() {
   const wrap = $('chat-messages');
   wrap.innerHTML = '';
 
-  appendMessage('ai', `Hey! I'm **DocMap** — tell me about the documentation change you're planning. You can:
+  appendMessage('ai', `**DocMap** — drop a Jira ticket ID and I'll instantly generate a documentation impact map.
 
-- Paste a **Jira ticket** description or ID
-- Drop a **GitHub repo URL** or paste a README
-- Paste **release notes, a spec, or a changelog entry**
-- Upload a **screenshot or image** of any of the above
-- Or just **describe the change** in plain words
-
-Once I understand the scope, I'll generate an interactive mind map showing every doc page you need to create, update, or remove.`);
+Type a ticket ID (e.g. \`DOC-3759\`) or describe the feature — I'll map every page to create, update, or remove without asking follow-up questions.`);
 
   // Quick-start chips
   const chips = el('div', 'flex flex-wrap gap-2 mt-2');
   [
-    ['🎫 Jira Ticket', 'Here is the Jira ticket I\'m documenting:\n'],
-    ['🐙 GitHub Repo', 'Here is the GitHub repo for this feature:\n'],
-    ['📋 Release Notes', 'Here are the release notes:\n'],
-    ['💬 Describe Change', 'I need to document the following change:\n'],
+    ['🎫 Jira ticket ID', 'DOC-'],
+    ['📋 Paste release notes', 'Here are the release notes:\n'],
+    ['💬 Describe the change', 'I need to document: '],
+    ['📁 Local file path', 'C:\\'],
   ].forEach(([label, prefix]) => {
     const chip = el('button', 'chip', label);
     chip.addEventListener('click', () => {
