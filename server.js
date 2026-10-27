@@ -59,10 +59,11 @@ function json(res, code, data) {
   res.end(JSON.stringify(data));
 }
 
-// ── httpsGet — wraps https.get as a Promise ───────────────────────────────────
+// ── httpsGet — wraps https/http.get as a Promise ─────────────────────────────
 function httpsGet(url, headersObj = {}) {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: headersObj }, res => {
+    const lib = url.startsWith('http://') ? http : https;
+    const req = lib.get(url, { headers: headersObj }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return resolve(httpsGet(res.headers.location, headersObj));
       }
@@ -110,8 +111,9 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/sitemap') {
     try {
       // Fetch the sitemap (may be an index pointing to sub-sitemaps)
+      const UA = 'Mozilla/5.0 (compatible; DocMap/1.0; +http://localhost)';
       async function fetchSitemapUrls(sitemapUrl, depth = 0) {
-        const r = await httpsGet(sitemapUrl);
+        const r = await httpsGet(sitemapUrl, { 'User-Agent': UA });
         if (r.status !== 200) throw new Error(`${sitemapUrl} returned ${r.status}`);
         const xml = r.body.toString('utf-8');
         if (xml.includes('<sitemapindex') && depth === 0) {
@@ -119,7 +121,7 @@ const server = http.createServer(async (req, res) => {
           const subUrls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1].trim()).slice(0, 10);
           const all = [];
           for (const su of subUrls) {
-            try { all.push(...await fetchSitemapUrls(su, 1)); } catch {}
+            try { all.push(...await fetchSitemapUrls(su, depth + 1)); } catch {}
           }
           return all;
         }
