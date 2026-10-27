@@ -399,6 +399,16 @@ async function sendMessage() {
   if (state.isStreaming) return;
 
   const text = $('chat-input').value.trim();
+  if (!text && state.pendingFiles.length === 0) return;
+
+  // Auto-fetch any pending detections before sending
+  const pending = Object.entries(state.detections).filter(([, d]) => d.status === 'pending');
+  if (pending.length) {
+    $('btn-send').disabled = true;
+    await Promise.all(pending.map(([key]) => fetchDetected(key)));
+    $('btn-send').disabled = false;
+  }
+
   const files = [...state.pendingFiles];
   if (!text && files.length === 0) return;
 
