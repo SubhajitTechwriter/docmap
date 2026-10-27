@@ -231,6 +231,30 @@ const server = http.createServer(async (req, res) => {
         text:   adfToText(c.body).trim(),
       })).filter(c => c.text);
 
+      // Auto-fetch linked tickets (up to 4) so Claude gets full context
+      const linkedTickets = [];
+      for (const link of (fields.issuelinks || []).slice(0, 4)) {
+        const linked = link.inwardIssue || link.outwardIssue;
+        if (!linked) continue;
+        try {
+          const lUrl = `${jiraUrl.replace(/\/$/, '')}/rest/api/3/issue/${linked.key}?fields=summary,description,status,issuetype,labels`;
+          const lr = await httpsGet(lUrl, { Authorization: `Basic ${auth}`, Accept: 'application/json' });
+          if (lr.status === 200) {
+            const ld = JSON.parse(lr.body.toString('utf-8'));
+            const lf = ld.fields;
+            linkedTickets.push({
+              id:           ld.key,
+              relationship: link.type?.name || 'relates to',
+              summary:      lf.summary || '',
+              description:  adfToText(lf.description).trim(),
+              status:       lf.status?.name || '',
+              type:         lf.issuetype?.name || '',
+              url:          `${jiraUrl.replace(/\/$/, '')}/browse/${ld.key}`,
+            });
+          }
+        } catch {}
+      }
+
       const ticket = {
         id:          data.key,
         summary:     fields.summary || '',
@@ -242,6 +266,7 @@ const server = http.createServer(async (req, res) => {
         reporter:    fields.reporter?.displayName || '',
         labels:      fields.labels || [],
         comments,
+        linkedTickets,
         url:         `${jiraUrl.replace(/\/$/, '')}/browse/${data.key}`,
       };
       return json(res, 200, ticket);
@@ -309,6 +334,36 @@ const server = http.createServer(async (req, res) => {
       } catch {}
 
       return json(res, 200, { title, content: result.body.toString('utf-8'), url: docUrl });
+    } catch (err) {
+      return json(res, 502, { error: err.message });
+    }
+  }
+
+  // ── GitHub file fetch ────────────────────────────────────────────────────────
+  if (pathname === '/api/github') {
+    const repo     = decodeURIComponent(url.searchParams.get('repo')   || '');
+    const filePath = decodeURIComponent(url.searchParams.get('path')   || '');
+    const branch   = url.searchParams.get('branch') || 'main';
+    const token    = url.searchParams.get('token')  || '';
+
+    if (!repo || !filePath) return json(res, 400, { error: 'repo (owner/name) and path are required' });
+
+    const apiUrl  = `https://api.github.com/repos/${repo}/contents/${filePath}?ref=${branch}`;
+    const headers = { 'User-Agent': 'DocMap/1.0', 'Accept': 'application/vnd.github.v3+json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    try {
+      const result = await httpsGet(apiUrl, headers);
+      if (result.status === 404) return json(res, 404, { error: `Not found in ${repo}: ${filePath}` });
+      if (result.status === 403) return json(res, 403, { error: 'GitHub rate-limited or needs auth — add a token in Connections → GitHub' });
+      if (result.status !== 200) return json(res, result.status, { error: `GitHub returned ${result.status}` });
+
+      const data = JSON.parse(result.body.toString('utf-8'));
+      if (Array.isArray(data)) {
+        return json(res, 200, { type: 'directory', path: filePath, files: data.map(f => ({ name: f.name, path: f.path, type: f.type })) });
+      }
+      const content = Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
+      return json(res, 200, { type: 'file', name: data.name, path: data.path, content });
     } catch (err) {
       return json(res, 502, { error: err.message });
     }

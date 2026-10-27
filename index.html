@@ -338,6 +338,7 @@
       <!-- Tabs -->
       <div class="flex border-b border-slate-800">
         <button class="conn-tab active" data-tab="jira">Jira</button>
+        <button class="conn-tab" data-tab="github">GitHub</button>
         <button class="conn-tab" data-tab="gdoc">Google Docs</button>
         <button class="conn-tab" data-tab="files">Local Files</button>
       </div>
@@ -375,6 +376,33 @@
         <p id="jira-status" class="text-xs hidden"></p>
         <p class="text-xs text-slate-500 leading-relaxed">
           Once saved, type any Jira ID (e.g. <code class="text-slate-400">DOC-1234</code>) in the chat and DocMap will fetch it automatically.
+        </p>
+      </div>
+
+      <!-- GitHub tab -->
+      <div id="conn-tab-github" class="conn-pane hidden p-5 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">Repository <span class="text-slate-500">(owner/name)</span></label>
+          <input id="github-repo" type="text" placeholder="e.g. SnapLogic/docs-source"
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500
+                   focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-mono" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1.5">
+            Personal access token
+            <a href="https://github.com/settings/tokens/new?scopes=repo&description=DocMap" target="_blank" rel="noopener"
+               class="ml-2 text-indigo-400 hover:text-indigo-300 font-normal">Create token ↗</a>
+          </label>
+          <input id="github-token" type="password" placeholder="ghp_..."
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white placeholder-slate-500
+                   focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-mono" />
+          <p class="text-xs text-slate-500 mt-1">Required for private repos. Public repos work without a token.</p>
+        </div>
+        <button id="github-save" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold
+                py-2 rounded-lg transition-colors">Save</button>
+        <p id="github-status" class="text-xs hidden"></p>
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Paste a GitHub file URL in the chat (e.g. <code class="text-slate-400">github.com/…/analyzing-pipelines.dita</code>) and DocMap will fetch the DITA content automatically.
         </p>
       </div>
 

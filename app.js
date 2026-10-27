@@ -9,6 +9,8 @@ const STORAGE_KEY_BEDROCK_MODEL = 'docmap_bedrock_model';
 const STORAGE_KEY_JIRA_URL      = 'docmap_jira_url';
 const STORAGE_KEY_JIRA_EMAIL    = 'docmap_jira_email';
 const STORAGE_KEY_JIRA_TOKEN    = 'docmap_jira_token';
+const STORAGE_KEY_GITHUB_TOKEN  = 'docmap_github_token';
+const STORAGE_KEY_GITHUB_REPO   = 'docmap_github_repo';
 
 // ── State ────────────────────────────────────────────────────────────────────
 const state = {
@@ -21,6 +23,10 @@ const state = {
     url:   localStorage.getItem(STORAGE_KEY_JIRA_URL)   || '',
     email: localStorage.getItem(STORAGE_KEY_JIRA_EMAIL) || '',
     token: localStorage.getItem(STORAGE_KEY_JIRA_TOKEN) || '',
+  },
+  github: {
+    token: localStorage.getItem(STORAGE_KEY_GITHUB_TOKEN) || '',
+    repo:  localStorage.getItem(STORAGE_KEY_GITHUB_REPO)  || '',
   },
   docsSitemap:   null, // { totalPages, summary, urls[] } — loaded on launch
   messages:      [],
@@ -900,6 +906,17 @@ const DETECT = [
     },
   },
   {
+    type:  'github',
+    icon:  '📦',
+    label: v => { try { return new URL(v).pathname.split('/').filter(Boolean).slice(4).join('/') || 'GitHub file'; } catch { return 'GitHub file'; } },
+    scan:  text => {
+      const hits = new Set();
+      for (const m of text.matchAll(/https?:\/\/github\.com\/[^\s"'\n]+?\.dita(?:map)?[^\s"'\n]*/g)) hits.add(m[0].replace(/[,;.]+$/, ''));
+      for (const m of text.matchAll(/https?:\/\/raw\.githubusercontent\.com\/[^\s"'\n]+/g)) hits.add(m[0].replace(/[,;.]+$/, ''));
+      return [...hits].map(v => ({ value: v }));
+    },
+  },
+  {
     type:  'file',
     icon:  '📁',
     label: v => v.replace(/.*[/\\]/, ''), // basename
@@ -1018,6 +1035,20 @@ async function fetchDetected(key) {
       displayName = `Google Doc: ${data.title}`;
       content = `[Google Doc: ${data.title}]\n${data.content}`;
 
+    } else if (det.type === 'github') {
+      // Convert github.com/owner/repo/blob/branch/path/to/file → API params
+      const m = det.value.match(/github\.com\/([^/]+\/[^/]+)\/blob\/([^/]+)\/(.+)/);
+      if (!m) throw new Error('Unrecognized GitHub URL — expected github.com/owner/repo/blob/branch/path');
+      const [, repo, branch, filePath] = m;
+      const proxy = state.provider === 'bedrock' ? state.proxyUrl : 'http://localhost:3001';
+      const params = new URLSearchParams({ repo, path: filePath, branch });
+      if (state.github.token) params.set('token', state.github.token);
+      const resp = await fetch(`${proxy}/api/github?${params}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `GitHub error ${resp.status}`);
+      displayName = data.name || filePath.split('/').pop();
+      content = `[GitHub: ${repo}/${filePath}]\n${data.content}`;
+
     } else if (det.type === 'file') {
       const proxy = state.provider === 'bedrock' ? state.proxyUrl : 'http://localhost:3001';
       const resp = await fetch(`${proxy}/api/file?path=${encodeURIComponent(det.value)}`);
@@ -1048,6 +1079,13 @@ function formatJiraForClaude(t) {
     out += `\n\nComments (${t.comments.length} recent):\n`;
     t.comments.forEach(c => { out += `\n[${c.author} – ${c.date}]\n${c.text}\n`; });
   }
+  if (t.linkedTickets?.length) {
+    out += `\n\n=== LINKED TICKETS (auto-fetched) ===\n`;
+    t.linkedTickets.forEach(lt => {
+      out += `\n[${lt.relationship.toUpperCase()}] ${lt.type}: ${lt.id} — ${lt.summary} (${lt.status})\nURL: ${lt.url}\n`;
+      if (lt.description) out += `\n${lt.description}\n`;
+    });
+  }
   return out;
 }
 
@@ -1058,7 +1096,19 @@ function initConnections() {
   if ($('jira-email')) $('jira-email').value = state.jira.email;
   if ($('jira-token')) $('jira-token').value = state.jira.token;
 
-  // Update conn dot if Jira is configured
+  // Load saved GitHub settings
+  if ($('github-token')) $('github-token').value = state.github.token;
+  if ($('github-repo'))  $('github-repo').value  = state.github.repo;
+
+  $('github-save')?.addEventListener('click', () => {
+    state.github.token = $('github-token').value.trim();
+    state.github.repo  = $('github-repo').value.trim();
+    localStorage.setItem(STORAGE_KEY_GITHUB_TOKEN, state.github.token);
+    localStorage.setItem(STORAGE_KEY_GITHUB_REPO,  state.github.repo);
+    updateConnDot();
+    showConnStatus('github', '✓ Saved', 'green');
+  });
+
   updateConnDot();
 
   $('btn-connections').addEventListener('click', () => {
@@ -1082,7 +1132,8 @@ function activateConnTab(name) {
 }
 
 function updateConnDot() {
-  $('conn-dot').classList.toggle('hidden', !state.jira.url || !state.jira.token);
+  const connected = (state.jira.url && state.jira.token) || state.github.repo;
+  $('conn-dot').classList.toggle('hidden', !connected);
 }
 
 async function saveJira() {
