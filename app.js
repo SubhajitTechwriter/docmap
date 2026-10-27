@@ -115,11 +115,13 @@ function initSetup() {
     $('setup-model').addEventListener('change', () => { state.model = $('setup-model').value; });
   }
 
-  // Bedrock: show/hide custom model input, handle "Load" button
-  $('bedrock-model-select').value = state.bedrockModel || 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
+  // Bedrock: text field is always visible; quick-pick fills it
+  $('bedrock-model-custom').value = state.bedrockModel || '';
   $('bedrock-model-select').addEventListener('change', () => {
-    const isCustom = $('bedrock-model-select').value === 'custom';
-    $('bedrock-model-custom').classList.toggle('hidden', !isCustom);
+    if ($('bedrock-model-select').value) {
+      $('bedrock-model-custom').value = $('bedrock-model-select').value;
+      $('bedrock-model-select').value = ''; // reset to placeholder
+    }
   });
 
   $('bedrock-fetch-models').addEventListener('click', async () => {
@@ -135,18 +137,18 @@ function initSetup() {
       if (data.error) throw new Error(data.error);
       if (!data.length) throw new Error('No Claude models found. Check your Bedrock model access permissions.');
       const sel = $('bedrock-model-select');
-      // Remove old dynamic options (keep static ones + custom)
+      // Remove old dynamic options
       Array.from(sel.options).filter(o => o.dataset.dynamic).forEach(o => o.remove());
       // Prepend fetched models
       data.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m.id;
-        opt.textContent = `${m.name || m.id}`;
+        opt.textContent = m.name || m.id;
         opt.dataset.dynamic = '1';
-        sel.insertBefore(opt, sel.firstChild);
+        sel.insertBefore(opt, sel.options[1]); // after the placeholder
       });
-      sel.value = data[0].id;
-      $('bedrock-model-custom').classList.add('hidden');
+      // Fill the text field with the best model
+      $('bedrock-model-custom').value = data[0].id;
     } catch (e) {
       errEl.textContent = 'Load failed: ' + e.message;
       errEl.classList.remove('hidden');
@@ -200,10 +202,7 @@ async function saveSettings() {
     } else {
       // Bedrock via local proxy
       const proxyUrl = $('bedrock-proxy').value.trim().replace(/\/$/, '');
-      const selVal  = $('bedrock-model-select').value;
-      const modelId = selVal === 'custom'
-        ? $('bedrock-model-custom').value.trim()
-        : selVal;
+      const modelId = $('bedrock-model-custom').value.trim();
 
       if (!modelId) throw new Error('Please enter a model ID.');
 
@@ -497,7 +496,7 @@ async function callBedrockStream(messages, system, onPartial) {
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
-    throw new Error(errData.error?.message || `Proxy error ${response.status} — is the local server running?`);
+    throw new Error((errData.error?.message || `Proxy error ${response.status}`) + ` [model: ${state.bedrockModel}]`);
   }
 
   return consumeSSE(response, onPartial);
