@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DocMap — Content Impact Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="h-full bg-slate-950 text-white font-sans antialiased">
+
+  <!-- ===== SETUP OVERLAY ===== -->
+  <div id="setup-overlay" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 mb-4 shadow-lg shadow-indigo-900">
+          <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+          </svg>
+        </div>
+        <h1 class="text-2xl font-bold tracking-tight">DocMap</h1>
+        <p class="text-slate-400 text-sm mt-1.5">Visual content impact planning for docs teams</p>
+      </div>
+
+      <div class="bg-slate-900 rounded-2xl p-5 border border-slate-800">
+        <label class="block text-sm font-medium text-slate-300 mb-2">Anthropic API Key</label>
+        <input id="setup-key" type="password" placeholder="sk-ant-..."
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3.5 py-2.5 text-white placeholder-slate-500
+                 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-mono" />
+        <p class="text-xs text-slate-500 mt-2 leading-relaxed">
+          Saved in your browser only. Sent only to <span class="text-slate-400">api.anthropic.com</span>.
+        </p>
+        <button id="setup-btn"
+          class="w-full mt-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 rounded-lg
+                 transition-colors text-sm flex items-center justify-center gap-2">
+          Get started
+        </button>
+        <p id="setup-error" class="text-red-400 text-xs mt-2 hidden"></p>
+      </div>
+
+      <!-- Model selector -->
+      <div class="mt-4 flex items-center gap-2">
+        <label class="text-xs text-slate-500">Model:</label>
+        <select id="setup-model"
+          class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-400 text-xs
+                 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer">
+          <option value="claude-sonnet-5-5">Sonnet 5.5 (recommended)</option>
+          <option value="claude-opus-5-5">Opus 5.5 (most capable)</option>
+          <option value="claude-haiku-5-5">Haiku 5.5 (fastest)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MAIN APP ===== -->
+  <div id="app" class="hidden h-full flex flex-col">
+
+    <!-- Header -->
+    <header class="flex-shrink-0 flex items-center justify-between px-4 h-12 bg-slate-900 border-b border-slate-800">
+      <div class="flex items-center gap-2.5">
+        <div class="w-6 h-6 rounded-md bg-indigo-600 flex items-center justify-center">
+          <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+              d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+          </svg>
+        </div>
+        <span class="font-bold text-sm tracking-tight">DocMap</span>
+        <span id="header-model" class="text-xs text-slate-500 font-mono"></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <!-- Legend (desktop) -->
+        <div class="hidden md:flex items-center gap-3 text-xs text-slate-500 mr-2">
+          <span class="legend-dot bg-green-500">Create</span>
+          <span class="legend-dot bg-amber-500">Modify</span>
+          <span class="legend-dot bg-red-500">Remove</span>
+          <span class="legend-dot bg-blue-500">Reference</span>
+        </div>
+        <button id="btn-export-png" title="Export map as PNG"
+          class="ctrl-btn" style="display:none">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+        </button>
+        <button id="btn-new-chat"
+          class="text-xs text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500
+                 px-3 py-1.5 rounded-lg transition-colors">
+          New chat
+        </button>
+        <button id="btn-change-key" title="Change API key"
+          class="ctrl-btn text-slate-500 hover:text-white">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Body: chat + map -->
+    <div class="flex-1 flex overflow-hidden">
+
+      <!-- ── Chat panel ── -->
+      <div class="flex flex-col w-full md:w-2/5 lg:w-1/3 border-r border-slate-800 overflow-hidden">
+
+        <!-- Messages -->
+        <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Attachment preview strip -->
+        <div id="attachment-strip" class="hidden px-3 pb-2 flex gap-2 flex-wrap border-t border-slate-800 pt-2"></div>
+
+        <!-- Input area -->
+        <div class="flex-shrink-0 p-3 border-t border-slate-800 bg-slate-900/50">
+          <div class="flex items-end gap-2">
+            <!-- Attach button -->
+            <label title="Attach file or image" class="ctrl-btn flex-shrink-0 cursor-pointer self-end mb-0.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+              </svg>
+              <input id="file-input" type="file" class="hidden" accept="image/*,.txt,.md,.json,.yaml,.yml" multiple />
+            </label>
+            <!-- Text input -->
+            <textarea id="chat-input" rows="1" placeholder="Paste Jira ticket, GitHub URL, release notes, or describe the change…"
+              class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white
+                     placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none
+                     min-h-[42px] max-h-40 overflow-y-auto"></textarea>
+            <!-- Send -->
+            <button id="btn-send"
+              class="flex-shrink-0 self-end mb-0.5 w-9 h-9 rounded-xl bg-indigo-600 hover:bg-indigo-500
+                     disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors">
+              <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+              </svg>
+            </button>
+          </div>
+          <p class="text-xs text-slate-600 mt-1.5 text-center">
+            Ctrl+Enter to send &nbsp;·&nbsp; paste images with Ctrl+V
+          </p>
+        </div>
+      </div>
+
+      <!-- ── Mind map panel ── -->
+      <div class="hidden md:flex flex-col flex-1 relative overflow-hidden">
+
+        <!-- Empty state -->
+        <div id="map-empty-state" class="absolute inset-0 flex flex-col items-center justify-center text-center p-8 pointer-events-none">
+          <div class="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mb-4">
+            <svg class="w-8 h-8 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <p class="text-slate-500 text-sm font-medium">Mind map appears here</p>
+          <p class="text-slate-600 text-xs mt-1 max-w-48 leading-relaxed">
+            Start a conversation and DocMap will generate an impact map as you chat
+          </p>
+        </div>
+
+        <!-- Cytoscape canvas -->
+        <div id="cy" class="flex-1 w-full"></div>
+
+        <!-- Zoom controls -->
+        <div id="map-controls" class="hidden absolute bottom-4 right-4 flex flex-col gap-1.5">
+          <button id="btn-zoom-in" class="ctrl-btn" title="Zoom in">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+          </button>
+          <button id="btn-zoom-out" class="ctrl-btn" title="Zoom out">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
+            </svg>
+          </button>
+          <button id="btn-zoom-fit" class="ctrl-btn" title="Fit to view">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Click hint -->
+        <p id="map-hint" class="hidden absolute bottom-4 left-1/2 -translate-x-1/2
+           bg-slate-900 border border-slate-700 rounded-full px-4 py-1.5 text-xs text-slate-400
+           pointer-events-none whitespace-nowrap shadow-lg">
+          Click any node for update instructions
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== NODE DETAIL MODAL ===== -->
+  <div id="modal" class="hidden fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div id="modal-backdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+    <div class="relative w-full sm:max-w-lg bg-slate-900 rounded-t-2xl sm:rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+      <!-- Handle (mobile) -->
+      <div class="sm:hidden flex justify-center pt-3 pb-1">
+        <div class="w-8 h-1 rounded-full bg-slate-700"></div>
+      </div>
+      <!-- Header -->
+      <div class="px-5 pb-4 pt-3 border-b border-slate-800">
+        <div class="flex items-start gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-1.5 mb-1.5">
+              <span id="modal-type-badge" class="badge-type">—</span>
+              <span id="modal-priority-badge" class="badge-meta">—</span>
+              <span id="modal-effort-badge" class="badge-meta">—</span>
+            </div>
+            <h3 id="modal-title" class="font-bold text-white leading-snug">—</h3>
+            <a id="modal-url" href="#" target="_blank" rel="noopener"
+               class="hidden text-indigo-400 hover:text-indigo-300 text-xs mt-1 block truncate">Open page ↗</a>
+          </div>
+          <button id="modal-close" class="text-slate-500 hover:text-white flex-shrink-0 mt-0.5 transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <!-- Tabs -->
+      <div class="flex border-b border-slate-800">
+        <button class="modal-tab active" data-tab="what">What</button>
+        <button class="modal-tab" data-tab="where">Where</button>
+        <button class="modal-tab" data-tab="how">How</button>
+        <button class="modal-tab" data-tab="hints">Content hints</button>
+      </div>
+      <!-- Content -->
+      <div class="p-5 max-h-60 overflow-y-auto text-sm text-slate-300 leading-relaxed">
+        <div id="tab-what"  class="tab-pane"></div>
+        <div id="tab-where" class="tab-pane hidden"></div>
+        <div id="tab-how"   class="tab-pane hidden"></div>
+        <div id="tab-hints" class="tab-pane hidden"></div>
+      </div>
+      <!-- Footer: "Ask in chat" button -->
+      <div class="px-5 pb-4 pt-2 border-t border-slate-800/60 flex gap-2">
+        <button id="modal-ask-btn"
+          class="flex-1 bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-600/40 text-indigo-300
+                 text-xs font-medium py-2 px-3 rounded-lg transition-colors">
+          Ask DocMap about this node →
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

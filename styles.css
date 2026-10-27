@@ -1,0 +1,245 @@
+/* ── DocMap custom styles ── */
+
+/* Legend dots */
+.legend-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.legend-dot::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.legend-dot.bg-green-500::before  { background: #22c55e; }
+.legend-dot.bg-amber-500::before  { background: #f59e0b; }
+.legend-dot.bg-red-500::before    { background: #ef4444; }
+.legend-dot.bg-blue-500::before   { background: #3b82f6; }
+
+/* Control buttons */
+.ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.ctrl-btn:hover {
+  background: #334155;
+  color: #f1f5f9;
+  border-color: #475569;
+}
+
+/* ── Chat messages ── */
+.msg-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  animation: fadeUp 0.18s ease;
+}
+.msg-row.user {
+  flex-direction: row-reverse;
+}
+
+.msg-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.msg-avatar.ai   { background: #4338ca; color: #c7d2fe; }
+.msg-avatar.user { background: #0f172a; border: 1px solid #334155; color: #94a3b8; }
+
+.msg-bubble {
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.msg-row.ai   .msg-bubble {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-top-left-radius: 4px;
+  color: #e2e8f0;
+}
+.msg-row.user .msg-bubble {
+  background: #4338ca;
+  border-top-right-radius: 4px;
+  color: #e0e7ff;
+}
+
+/* Attachment thumbnails inside message */
+.msg-img-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.msg-img-grid img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #334155;
+}
+
+/* Typing indicator (3-dot) */
+.typing-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6366f1;
+  margin: 0 2px;
+  animation: bounce 1.2s infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+/* Map updated badge in chat */
+.map-updated-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  background: #14532d33;
+  border: 1px solid #166534;
+  color: #4ade80;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Attachment strip */
+.attach-thumb {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.attach-thumb img   { width: 100%; height: 100%; object-fit: cover; }
+.attach-thumb .text { background: #1e293b; color: #94a3b8; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 10px; padding: 4px; text-align: center; word-break: break-all; }
+.attach-thumb .rm   {
+  position: absolute; top: 2px; right: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #ef4444; color: white;
+  font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; line-height: 1;
+}
+
+/* Suggestion chips */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid #334155;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  cursor: pointer;
+  background: transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.chip:hover { background: #1e293b; color: #e2e8f0; border-color: #475569; }
+
+/* ── Modal ── */
+.modal-tab {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.modal-tab:hover  { color: #94a3b8; }
+.modal-tab.active { color: #818cf8; border-bottom-color: #6366f1; }
+
+.tab-pane { display: block; }
+.tab-pane.hidden { display: none; }
+
+.badge-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.badge-type.create    { background: #14532d; color: #4ade80; }
+.badge-type.modify    { background: #451a03; color: #fbbf24; }
+.badge-type.delete    { background: #450a0a; color: #f87171; }
+.badge-type.reference { background: #172554; color: #60a5fa; }
+
+.badge-meta {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 0.65rem;
+  font-weight: 500;
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #94a3b8;
+}
+
+/* ── Cytoscape container ── */
+#cy {
+  width: 100%;
+  height: 100%;
+  background: #020617;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar          { width: 5px; height: 5px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30%           { transform: translateY(-5px); }
+}
+
+/* Auto-grow textarea */
+#chat-input { overflow-y: hidden; }
+
+/* Markdown formatting inside bubbles */
+.msg-bubble strong { color: #f1f5f9; font-weight: 600; }
+.msg-bubble ul     { list-style: disc; padding-left: 1.25rem; margin-top: 0.25rem; }
+.msg-bubble ol     { list-style: decimal; padding-left: 1.25rem; margin-top: 0.25rem; }
+.msg-bubble li     { margin-bottom: 0.2rem; }
+.msg-bubble code   { background: #0f172a; border: 1px solid #334155; border-radius: 4px; padding: 1px 5px; font-size: 0.8em; font-family: ui-monospace, monospace; color: #a5b4fc; }
+.msg-bubble p + p  { margin-top: 0.5rem; }
